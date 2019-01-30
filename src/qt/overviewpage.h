@@ -41,7 +41,8 @@ public:
 
 public Q_SLOTS:
     void setBalance(const CAmount& balance, const CAmount& unconfirmedBalance, const CAmount& stakingBalance, const CAmount& immatureBalance,
-                    const CAmount& watchOnlyBalance, const CAmount& watchUnconfBalance, const CAmount& watchImmatureBalance);
+                    const CAmount& watchOnlyBalance, const CAmount& watchUnconfBalance, const CAmount& watchImmatureBalance,
+                    const CAmount& coldStakingBalance);
 
     void setStatusTitleBlocks(QString text);
 
@@ -56,9 +57,9 @@ public Q_SLOTS:
 
     void showLockStaking(bool status);
     void setStakingStatus(QString text);
-    void setStakingStats(QString day, QString week, QString month);
+    void setStakingStats(QString day, QString week, QString month, QString year, QString all);
     void updateStakeReportNow();
-    void updateStakeReportbalanceChanged(qint64, qint64, qint64, qint64, qint64,qint64, qint64);
+    void updateStakeReportbalanceChanged(CAmount, CAmount, CAmount, CAmount, CAmount, CAmount, CAmount);
     void setVotingStatus(QString text);
 
 
@@ -72,6 +73,7 @@ private:
     CAmount currentBalance;
     CAmount currentUnconfirmedBalance;
     CAmount currentStakingBalance;
+    CAmount currentColdStakingBalance;
     CAmount currentImmatureBalance;
     CAmount currentWatchOnlyBalance;
     CAmount currentWatchUnconfBalance;

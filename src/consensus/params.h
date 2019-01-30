@@ -6,6 +6,7 @@
 #ifndef NAVCOIN_CONSENSUS_PARAMS_H
 #define NAVCOIN_CONSENSUS_PARAMS_H
 
+#include "amount.h"
 #include "uint256.h"
 #include <map>
 #include <string>
@@ -22,7 +23,12 @@ enum DeploymentPos
     DEPLOYMENT_SEGWIT_LEGACY,
     DEPLOYMENT_COMMUNITYFUND,
     DEPLOYMENT_COMMUNITYFUND_ACCUMULATION,
+    DEPLOYMENT_COLDSTAKING,
+    DEPLOYMENT_COMMUNITYFUND_ACCUMULATION_SPREAD,
+    DEPLOYMENT_COMMUNITYFUND_AMOUNT_V2,
     DEPLOYMENT_NTPSYNC,
+    DEPLOYMENT_STATIC_REWARD,
+    DEPLOYMENT_QUORUM_CFUND,
     MAX_VERSION_BITS_DEPLOYMENTS
 };
 
@@ -69,14 +75,18 @@ struct Params {
     int nLastPOWBlock;
 
     int nBlocksPerVotingCycle;
-    int nQuorumVotes;
     float nVotesAcceptProposal;
     float nVotesRejectProposal;
     float nVotesAcceptPaymentRequest;
     float nVotesRejectPaymentRequest;
     float nMinimumQuorum;
+    float nMinimumQuorumFirstHalf;
+    float nMinimumQuorumSecondHalf;
     int nCommunityFundMinAge;
     int64_t nProposalMinimalFee;
+    int nBlockSpreadCFundAccumulation;
+    CAmount nCommunityFundAmount;
+    CAmount nCommunityFundAmountV2;
     unsigned int nCyclesProposalVoting;
     unsigned int nCyclesPaymentRequestVoting;
     int nPaymentRequestMaxVersion;
@@ -91,6 +101,10 @@ struct Params {
     int nDailyBlockCount;
     unsigned int nModifierInterval; // time to elapse before new modifier is computed
     int64_t sigActivationTime;
+    int64_t nCoinbaseTimeActivationHeight;
+    int64_t nMaxFutureDrift;
+    CAmount nStaticReward;
+    int nHeightv451Fork;
 
     int64_t DifficultyAdjustmentInterval() const { return nPowTargetTimespan / nPowTargetSpacing; }
 };

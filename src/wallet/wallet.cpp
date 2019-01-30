@@ -66,7 +66,7 @@ CFeeRate CWallet::fallbackFee = CFeeRate(DEFAULT_FALLBACK_FEE);
 
 
 int64_t nReserveBalance = 0;
-int64_t nMinimumInputValue = 0;
+int64_t nMinimumInputValue = GetArg("-mininputvalue", 1 * COIN);
 
 const uint256 CMerkleTx::ABANDON_HASH(uint256S("0000000000000000000000000000000000000000000000000000000000000001"));
 
@@ -203,7 +203,7 @@ int64_t CWallet::GetNewMint() const
 uint64_t CWallet::GetStakeWeight() const
 {
     // Choose coins to use
-    int64_t nBalance = GetBalance();
+    int64_t nBalance = GetBalance() + GetColdStakingBalance();
 
     if (nBalance <= nReserveBalance)
         return 0;
@@ -265,7 +265,10 @@ void CWallet::AvailableCoinsForStaking(vector<COutput>& vCoins, unsigned int nSp
             for (unsigned int i = 0; i < pcoin->vout.size(); i++)
                 if (!(IsSpent(wtxid,i)) && IsMine(pcoin->vout[i]) && pcoin->vout[i].nValue >= nMinimumInputValue){
                     vCoins.push_back(COutput(pcoin, i, nDepth, true,
-                                           (IsMine(pcoin->vout[i]) & (ISMINE_SPENDABLE)) != ISMINE_NO));
+                                           ((IsMine(pcoin->vout[i]) & (ISMINE_SPENDABLE)) != ISMINE_NO &&
+                                           !pcoin->vout[i].scriptPubKey.IsColdStaking()) ||
+                                           ((IsMine(pcoin->vout[i]) & (ISMINE_STAKABLE)) != ISMINE_NO &&
+                                           IsColdStakingEnabled(pindexBestHeader, Params().GetConsensus()))));
                 }
         }
     }
@@ -313,7 +316,7 @@ bool CWallet::SelectCoinsForStaking(int64_t nTargetValue, unsigned int nSpendTim
 
 bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int64_t nSearchInterval, int64_t nFees, CMutableTransaction& txNew, CKey& key)
 {
-    CBlockIndex* pindexPrev = pindexBestHeader;
+    CBlockIndex* pindexPrev = chainActive.Tip();
     arith_uint256 bnTargetPerCoinDay;
     bnTargetPerCoinDay.SetCompact(nBits);
 
@@ -326,7 +329,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
     txNew.vout.push_back(CTxOut(0, scriptEmpty));
 
     // Choose coins to use
-    int64_t nBalance = GetBalance();
+    int64_t nBalance = GetBalance() + GetColdStakingBalance();
 
     if (nBalance <= nReserveBalance)
         return false;
@@ -370,10 +373,22 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
                     break;
                 }
                 LogPrint("coinstake", "CreateCoinStake : parsed kernel type=%d\n", whichType);
-                if (whichType != TX_PUBKEY && whichType != TX_PUBKEYHASH)
+                if (whichType != TX_PUBKEY && whichType != TX_PUBKEYHASH && whichType != TX_COLDSTAKING)
                 {
                     LogPrint("coinstake", "CreateCoinStake : no support for kernel type=%d\n", whichType);
                     break;  // only support pay to public key and pay to address
+                }
+                if (whichType == TX_COLDSTAKING) // cold staking
+                {
+                    // try to find staking key
+                    if (!keystore.GetKey(uint160(vSolutions[0]), key))
+                    {
+                        LogPrint("coinstake", "CreateCoinStake : failed to get key for kernel type=%d\n", whichType);
+                        break;  // unable to find corresponding public key
+                    } else {
+                        // we keep the same script
+                        scriptPubKeyOut = scriptPubKeyKernel;
+                    }
                 }
                 if (whichType == TX_PUBKEYHASH) // pay to address type
                 {
@@ -534,11 +549,36 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
     // Adds Community Fund output if enabled
     if(IsCommunityFundAccumulationEnabled(pindexPrev, Params().GetConsensus(), false))
     {
-        int fundIndex = txNew.vout.size() + 1;
-        txNew.vout.resize(fundIndex);
-        CFund::SetScriptForCommunityFundContribution(txNew.vout[fundIndex-1].scriptPubKey);
-        txNew.vout[fundIndex-1].nValue = COMMUNITY_FUND_AMOUNT;
+        if(IsCommunityFundAccumulationSpreadEnabled(pindexPrev, Params().GetConsensus()))
+        {
+            if((pindexPrev->nHeight + 1) % Params().GetConsensus().nBlockSpreadCFundAccumulation == 0)
+            {
+                int fundIndex = txNew.vout.size() + 1;
+                txNew.vout.resize(fundIndex);
+                CFund::SetScriptForCommunityFundContribution(txNew.vout[fundIndex-1].scriptPubKey);
+
+                if(IsCommunityFundAmountV2Enabled(pindexPrev, Params().GetConsensus())) {
+                    txNew.vout[fundIndex-1].nValue = Params().GetConsensus().nCommunityFundAmountV2 * Params().GetConsensus().nBlockSpreadCFundAccumulation;
+                } else {
+                    txNew.vout[fundIndex-1].nValue = Params().GetConsensus().nCommunityFundAmount * Params().GetConsensus().nBlockSpreadCFundAccumulation;
+                }
+            }
+        }
+        else
+        {
+            int fundIndex = txNew.vout.size() + 1;
+            txNew.vout.resize(fundIndex);
+            CFund::SetScriptForCommunityFundContribution(txNew.vout[fundIndex-1].scriptPubKey);
+
+             if(IsCommunityFundAmountV2Enabled(pindexPrev, Params().GetConsensus())) {
+                txNew.vout[fundIndex-1].nValue = Params().GetConsensus().nCommunityFundAmountV2;
+             } else {
+                txNew.vout[fundIndex-1].nValue = Params().GetConsensus().nCommunityFundAmount;
+             }
+        }
     }
+
+    txNew.nVersion = IsCommunityFundEnabled(pindexBestHeader,Params().GetConsensus()) ? CTransaction::TXDZEEL_VERSION_V2 : CTransaction::TXDZEEL_VERSION;
 
     // Sign
     int nIn = 0;
@@ -548,7 +588,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
         bool signSuccess;
         const CScript& scriptPubKey = coin.first->vout[coin.second].scriptPubKey;
         SignatureData sigdata;
-        signSuccess = ProduceSignature(TransactionSignatureCreator(this, &txNewConst, nIn, coin.first->vout[coin.second].nValue, SIGHASH_ALL), scriptPubKey, sigdata);
+        signSuccess = ProduceSignature(TransactionSignatureCreator(this, &txNewConst, nIn, coin.first->vout[coin.second].nValue, SIGHASH_ALL), scriptPubKey, sigdata, true);
 
         if (!signSuccess)
         {
@@ -1759,7 +1799,8 @@ void CWalletTx::GetAmounts(list<COutputEntry>& listReceived,
     if (nDebit > 0) // debit>0 means we signed/sent this transaction
     {
         CAmount nValueOut = GetValueOut();
-        nFee = nDebit - nValueOut;
+        CAmount nValueOutCFund = GetValueOutCFund();
+        nFee = nDebit - nValueOut + nValueOutCFund;
     }
 
     // Sent/received.
@@ -1965,6 +2006,17 @@ CAmount CWalletTx::GetDebit(const isminefilter& filter) const
             debit += nDebitCached;
         }
     }
+    else if (filter & ISMINE_STAKABLE)
+    {
+        if (fColdStakingDebitCached)
+            debit += nColdStakingDebitCached;
+        else
+        {
+            nColdStakingDebitCached = pwallet->GetDebit(*this, ISMINE_STAKABLE);
+            fColdStakingDebitCached = true;
+            debit += nColdStakingDebitCached;
+        }
+    }
     if(filter & ISMINE_WATCH_ONLY)
     {
         if(fWatchDebitCached)
@@ -1998,6 +2050,17 @@ CAmount CWalletTx::GetCredit(const isminefilter& filter) const
             credit += nCreditCached;
         }
     }
+    else if (filter & ISMINE_STAKABLE)
+    {
+        if (fColdStakingCreditCached)
+            credit += nColdStakingCreditCached;
+        else
+        {
+            nColdStakingCreditCached = pwallet->GetCredit(*this, ISMINE_STAKABLE);
+            fColdStakingCreditCached = true;
+            credit += nColdStakingCreditCached;
+        }
+    }
     if (filter & ISMINE_WATCH_ONLY)
     {
         if (fWatchCreditCached)
@@ -2009,6 +2072,7 @@ CAmount CWalletTx::GetCredit(const isminefilter& filter) const
             credit += nWatchCreditCached;
         }
     }
+
     return credit;
 }
 
@@ -2053,6 +2117,31 @@ CAmount CWalletTx::GetAvailableCredit(bool fUseCache) const
 
     nAvailableCreditCached = nCredit;
     fAvailableCreditCached = true;
+    return nCredit;
+}
+
+CAmount CWalletTx::GetAvailableStakableCredit() const
+{
+    if (pwallet == 0)
+        return 0;
+
+    // Must wait until coinbase is safely deep enough in the chain before valuing it
+    if ((IsCoinBase() || IsCoinStake()) && GetBlocksToMaturity() > 0)
+        return 0;
+
+    CAmount nCredit = 0;
+    uint256 hashTx = GetHash();
+    for (unsigned int i = 0; i < vout.size(); i++)
+    {
+        if (!pwallet->IsSpent(hashTx, i))
+        {
+            const CTxOut &txout = vout[i];
+            nCredit += pwallet->GetCredit(txout, ISMINE_STAKABLE);
+            if (!MoneyRange(nCredit))
+                throw std::runtime_error("CWalletTx::GetAvailableCredit() : value out of range");
+        }
+    }
+
     return nCredit;
 }
 
@@ -2231,6 +2320,22 @@ CAmount CWallet::GetBalance() const
     return nTotal;
 }
 
+CAmount CWallet::GetColdStakingBalance() const
+{
+    CAmount nTotal = 0;
+    {
+        LOCK2(cs_main, cs_wallet);
+        for (map<uint256, CWalletTx>::const_iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)
+        {
+            const CWalletTx* pcoin = &(*it).second;
+            if (pcoin->IsTrusted())
+                nTotal += pcoin->GetAvailableStakableCredit();
+        }
+    }
+
+    return nTotal;
+}
+
 CAmount CWallet::GetUnconfirmedBalance() const
 {
     CAmount nTotal = 0;
@@ -2305,7 +2410,7 @@ CAmount CWallet::GetImmatureWatchOnlyBalance() const
     return nTotal;
 }
 
-void CWallet::AvailableCoins(vector<COutput>& vCoins, bool fOnlyConfirmed, const CCoinControl *coinControl, bool fIncludeZeroValue) const
+void CWallet::AvailableCoins(vector<COutput>& vCoins, bool fOnlyConfirmed, const CCoinControl *coinControl, bool fIncludeZeroValue, bool fIncludeColdStaking) const
 {
     vCoins.clear();
 
@@ -2342,7 +2447,7 @@ void CWallet::AvailableCoins(vector<COutput>& vCoins, bool fOnlyConfirmed, const
                         vCoins.push_back(COutput(pcoin, i, nDepth,
                                                  ((mine & ISMINE_SPENDABLE) != ISMINE_NO) ||
                                                   (coinControl && coinControl->fAllowWatchOnly && (mine & ISMINE_WATCH_SOLVABLE) != ISMINE_NO),
-                                                 (mine & (ISMINE_SPENDABLE | ISMINE_WATCH_SOLVABLE)) != ISMINE_NO));
+                                                 (mine & (ISMINE_SPENDABLE | ISMINE_WATCH_SOLVABLE | (fIncludeColdStaking ? ISMINE_STAKABLE : ISMINE_NO))) != ISMINE_NO));
             }
         }
     }
@@ -2749,6 +2854,8 @@ bool CWallet::CreateTransaction(const vector<CRecipient>& vecSend, CWalletTx& wt
                 BOOST_FOREACH(PAIRTYPE(const CWalletTx*, unsigned int) pcoin, setCoins)
                 {
                     CAmount nCredit = pcoin.first->vout[pcoin.second].nValue;
+                    if(pcoin.first->vout[pcoin.second].scriptPubKey.IsColdStaking())
+                        wtxNew.fSpendsColdStaking = true;
                     //The coin age after the next block (depth+1) is used instead of the current,
                     //reflecting an assumption the user would accept a bit more delay for
                     //a chance at a free transaction.
@@ -3622,6 +3729,13 @@ public:
     void operator()(const CKeyID &keyId) {
         if (keystore.HaveKey(keyId))
             vKeys.push_back(keyId);
+    }
+
+    void operator()(const pair<CKeyID, CKeyID> &keyId) {
+        if (keystore.HaveKey(keyId.first))
+            vKeys.push_back(keyId.first);
+        if (keystore.HaveKey(keyId.second))
+            vKeys.push_back(keyId.second);
     }
 
     void operator()(const CScriptID &scriptId) {

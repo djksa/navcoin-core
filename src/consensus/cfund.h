@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The NavCoin Core developers
+// Copyright (c) 2018 The NavCoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -31,6 +31,7 @@ static const flags ACCEPTED = 0x1;
 static const flags REJECTED = 0x2;
 static const flags EXPIRED = 0x3;
 static const flags PENDING_FUNDS = 0x4;
+static const flags PENDING_VOTING_PREQ = 0x5;
 
 void SetScriptForCommunityFundContribution(CScript &script);
 void SetScriptForProposalVote(CScript &script, uint256 proposalhash, bool vote);
@@ -39,10 +40,6 @@ bool FindProposal(string propstr, CFund::CProposal &proposal);
 bool FindProposal(uint256 prophash, CFund::CProposal &proposal);
 bool FindPaymentRequest(uint256 preqhash, CFund::CPaymentRequest &prequest);
 bool FindPaymentRequest(string preqstr, CFund::CPaymentRequest &prequest);
-void UpdateMapPaymentRequest(uint256 preqhash, CFund::CPaymentRequest prequest);
-void UpdateMapPaymentRequest(uint256 preqhash);
-void UpdateMapProposal(uint256 preqhash, CFund::CProposal prequest);
-void UpdateMapProposal(uint256 preqhash);
 bool VoteProposal(string strProp, bool vote, bool &duplicate);
 bool VoteProposal(uint256 proposalHash, bool vote, bool &duplicate);
 bool RemoveVoteProposal(string strProp);
@@ -51,23 +48,26 @@ bool VotePaymentRequest(string strProp, bool vote, bool &duplicate);
 bool VotePaymentRequest(uint256 proposalHash, bool vote, bool &duplicate);
 bool RemoveVotePaymentRequest(string strProp);
 bool RemoveVotePaymentRequest(uint256 proposalHash);
-bool IsValidPaymentRequest(CTransaction tx);
-bool IsValidProposal(CTransaction tx);
+bool IsValidPaymentRequest(CTransaction tx, int nMaxVersion);
+bool IsValidProposal(CTransaction tx, int nMaxVersion);
 
 class CPaymentRequest
 {
 public:
+    static const int32_t CURRENT_VERSION=3;
+
     CAmount nAmount;
     flags fState;
     uint256 hash;
     uint256 proposalhash;
+    uint256 txblockhash;
     uint256 blockhash;
     uint256 paymenthash;
     int nVotesYes;
     int nVotesNo;
     string strDZeel;
     int nVersion;
-    int nVotingCycle;
+    unsigned int nVotingCycle;
 
     CPaymentRequest() { SetNull(); }
 
@@ -77,6 +77,8 @@ public:
         nVotesYes = 0;
         nVotesNo = 0;
         hash = uint256();
+        blockhash = uint256();
+        txblockhash = uint256();
         proposalhash = uint256();
         paymenthash = uint256();
         strDZeel = "";
@@ -109,10 +111,11 @@ public:
     }
 
     std::string ToString() const {
-        return strprintf("CPaymentRequest(hash=%s, nAmount=%f, fState=%s, nVotesYes=%u, nVotesNo=%u, proposalhash=%s, "
-                         "blockhash=%s, paymenthash=%s, strDZeel=%s)",
-                         hash.ToString().substr(0,10), (float)nAmount/COIN, GetState(), nVotesYes, nVotesNo, proposalhash.ToString().substr(0,10),
-                         blockhash.ToString().substr(0,10), paymenthash.ToString().substr(0,10), strDZeel);
+        return strprintf("CPaymentRequest(hash=%s, nVersion=%d, nAmount=%f, fState=%s, nVotesYes=%u, nVotesNo=%u, nVotingCycle=%u, "
+                         " proposalhash=%s, blockhash=%s, paymenthash=%s, strDZeel=%s)",
+                         hash.ToString(), nVersion, (float)nAmount/COIN, GetState(), nVotesYes, nVotesNo,
+                         nVotingCycle, proposalhash.ToString(), blockhash.ToString().substr(0,10),
+                         paymenthash.ToString().substr(0,10), strDZeel);
     }
 
     void ToJson(UniValue& ret) const;
@@ -136,7 +139,7 @@ public:
             if(nAmount < 0)
             {
                 READWRITE(nAmount);
-                READWRITE(nVersion);
+                READWRITE(this->nVersion);
             }
             else
             {
@@ -148,7 +151,7 @@ public:
             CAmount nSignalVersion = -1;
             READWRITE(nSignalVersion);
             READWRITE(nAmount);
-            READWRITE(nVersion);
+            READWRITE(this->nVersion);
         }
         READWRITE(fState);
         READWRITE(nVotesYes);
@@ -158,6 +161,11 @@ public:
         READWRITE(blockhash);
         READWRITE(paymenthash);
         READWRITE(strDZeel);
+        READWRITE(txblockhash);
+
+        // Version-based read/write
+        if(nVersion >= 2)
+           READWRITE(nVotingCycle);
     }
 
 };
@@ -165,6 +173,8 @@ public:
 class CProposal
 {
 public:
+    static const int32_t CURRENT_VERSION=3;
+
     CAmount nAmount;
     CAmount nFee;
     std::string Address;
@@ -176,8 +186,9 @@ public:
     std::string strDZeel;
     uint256 hash;
     uint256 blockhash;
+    uint256 txblockhash;
     int nVersion;
-    int nVotingCycle;
+    unsigned int nVotingCycle;
 
     CProposal() { SetNull(); }
 
@@ -204,10 +215,10 @@ public:
 
     std::string ToString(uint32_t currentTime = 0) const {
         std::string str;
-        str += strprintf("CProposal(hash=%s, nAmount=%f, available=%f, nFee=%f, address=%s, nDeadline=%u, nVotesYes=%u, "
-                         "nVotesNo=%u, fState=%s, strDZeel=%s, blockhash=%s)",
-                         hash.ToString(), (float)nAmount/COIN, (float)GetAvailable()/COIN, (float)nFee/COIN, Address, nDeadline,
-                         nVotesYes, nVotesNo, GetState(currentTime), strDZeel, blockhash.ToString().substr(0,10));
+        str += strprintf("CProposal(hash=%s, nVersion=%i, nAmount=%f, available=%f, nFee=%f, address=%s, nDeadline=%u, nVotesYes=%u, "
+                         "nVotesNo=%u, nVotingCycle=%u, fState=%s, strDZeel=%s, blockhash=%s)",
+                         hash.ToString(), nVersion, (float)nAmount/COIN, (float)GetAvailable()/COIN, (float)nFee/COIN, Address, nDeadline,
+                         nVotesYes, nVotesNo, nVotingCycle, GetState(currentTime), strDZeel, blockhash.ToString().substr(0,10));
         for (unsigned int i = 0; i < vPayments.size(); i++) {
             CFund::CPaymentRequest prequest;
             if(FindPaymentRequest(vPayments[i], prequest))
@@ -235,6 +246,9 @@ public:
             if(fState != EXPIRED)
                 sFlags += " waiting for end of voting period";
         }
+        if(fState == PENDING_VOTING_PREQ) {
+            sFlags = "expired pending voting of payment requests";
+        }
         return sFlags;
     }
 
@@ -254,6 +268,17 @@ public:
         return fState == ACCEPTED;
     }
 
+    bool HasPendingPaymentRequests() const {
+        for (unsigned int i = 0; i < vPayments.size(); i++)
+        {
+            CFund::CPaymentRequest prequest;
+            if(FindPaymentRequest(vPayments[i], prequest))
+                if(prequest.CanVote())
+                    return true;
+        }
+        return false;
+    }
+
     CAmount GetAvailable(bool fIncludeRequests = false) const
     {
         CAmount initial = nAmount;
@@ -261,7 +286,7 @@ public:
         {
             CFund::CPaymentRequest prequest;
             if(FindPaymentRequest(vPayments[i], prequest))
-                if(fIncludeRequests || (!fIncludeRequests && prequest.fState == ACCEPTED))
+                if((fIncludeRequests && prequest.fState != REJECTED) || (!fIncludeRequests && prequest.fState == ACCEPTED))
                     initial -= prequest.nAmount;
         }
         return initial;
@@ -284,7 +309,7 @@ public:
             if(nFee < 0)
             {
                 READWRITE(nFee);
-                READWRITE(nVersion);
+                READWRITE(this->nVersion);
             }
             else
             {
@@ -296,7 +321,7 @@ public:
             CAmount nSignalVersion = -1;
             READWRITE(nSignalVersion);
             READWRITE(nFee);
-            READWRITE(nVersion);
+            READWRITE(this->nVersion);
         }
 
         READWRITE(Address);
@@ -308,10 +333,12 @@ public:
         READWRITE(strDZeel);
         READWRITE(hash);
         READWRITE(blockhash);
+        READWRITE(txblockhash);
 
         // Version-based read/write
-        if(nVersion >= 2)
+        if(nVersion >= 2) {
            READWRITE(nVotingCycle);
+        }
 
     }
 

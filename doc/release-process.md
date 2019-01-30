@@ -29,7 +29,7 @@ E.g: `v2.5.0-rc.1`, `v2.5.0-rc.2`, `v2.5.0-rc.3`
 
 * PATCH - 2 Weeks minimum from the time of notification to the community, via signaling by the PR date.
 
-* MINOR - 6 Weeks minimum from the time of notification to the community, via signaling by the PR date.
+* MINOR - 4 Weeks minimum from the time of notification to the community, via signaling by the PR date.
 
 * MAJOR - 8 Weeks minimum from the time of notification to the community, via signaling by the PR date.
 
@@ -40,12 +40,11 @@ Please note any type of network security or stability issues will be prioritized
 
 Before every release candidate:
 
-* Update translations see [translation_process.md](https://github.com/navcoin/navcoin/blob/master/doc/translation_process.md#synchronising-translations).
+* Update translations see [translation_process.md](https://github.com/navcoin/navcoin-core/blob/master/doc/translation_process.md#synchronising-translations).
 
 Before every minor and major release:
 
-* Update [npips.md](npips.md) a to account for the protocol changes since the last release
-* Update [bips.md](bips.md) to account for changes since the last release that we included from bitcoin core.
+* Update [npips.md](npips.md) to account for the protocol changes since the last release
 * Update version in sources (see below)
 * Write release notes (see below)
 
@@ -68,7 +67,7 @@ Update the following:
     - `_CLIENT_VERSION_MAJOR`
     - `_CLIENT_VERSION_MINOR`
     - `_CLIENT_VERSION_REVISION`
-    - Don't forget to set `_CLIENT_VERSION_IS_RELEASE` to `true`
+    - Don't forget to set `_CLIENT_VERSION_IS_RELEASE` to `true`, `_CLIENT_BUILD_IS_TEST_RELEASE` to `false` and `_CLIENT_BUILD_IS_RELEASE_CANDIDATE` to `false`
 - `src/clientversion.h`: (this mirrors `configure.ac` - see issue #3539)
     - `CLIENT_VERSION_MAJOR`
     - `CLIENT_VERSION_MINOR`
@@ -81,9 +80,6 @@ Update the following:
 Write release notes. git shortlog helps a lot, for example:
 
     git shortlog --no-merges v(current version, e.g. 4.0.6)..v(new version, e.g. 4.1.0)
-
-(or ping @wumpus on IRC, he has specific tooling to generate the list of merged pulls
-and sort them into categories based on labels)
 
 Generate list of authors:
 
@@ -98,7 +94,7 @@ Tag version (or release candidate) in git
 Setup Gitian descriptors:
 
     pushd ./navcoin-core
-    export VERSION=(new version, e.g. v4.1.0)
+    export VERSION=(new version, e.g. v4.1.0, which should also be the name of the repository branch)
     git fetch
     git checkout v${VERSION}
     popd
@@ -143,7 +139,6 @@ The gbuild invocations below <b>DO NOT DO THIS</b> by default.
     ./bin/gbuild --memory 3000 --commit navcoin-core=${VERSION} ../navcoin-core/contrib/gitian-descriptors/gitian-arm.yml
     mv build/out/navcoin-*.tar.gz build/out/src/navcoin-*.tar.gz ../
     
-    pushd ./gitian-builder
     ./bin/gbuild --memory 3000 --commit navcoin-core=${VERSION} ../navcoin-core/contrib/gitian-descriptors/gitian-linux.yml
     mv build/out/navcoin-*.tar.gz build/out/src/navcoin-*.tar.gz ../
 

@@ -128,6 +128,7 @@ def sync_blocks(rpc_connections, wait=1, timeout=60):
     while timeout > 0:
         tips = [ x.getbestblockhash() for x in rpc_connections ]
         if tips == [ tips[0] ]*len(tips):
+        #if all x.getblockhash() in tips are the same return True
             return True
         time.sleep(wait)
         timeout -= wait
@@ -158,7 +159,7 @@ def initialize_datadir(dirname, n):
         os.makedirs(datadir)
     rpc_u, rpc_p = rpc_auth_pair(n)
     with open(os.path.join(datadir, "navcoin.conf"), 'w') as f:
-        f.write("regtest=1\n")
+        f.write("devnet=1\n")
         f.write("rpcuser=" + rpc_u + "\n")
         f.write("rpcpassword=" + rpc_p + "\n")
         f.write("port="+str(p2p_port(n))+"\n")
@@ -247,7 +248,7 @@ def initialize_chain(test_dir, num_nodes):
             for peer in range(4):
                 for j in range(25):
                     set_node_times(rpcs, block_time)
-                    rpcs[peer].generate(1)
+                    slow_gen(rpcs[peer], 1)
                     block_time += 10*60
                 # Must sync before next peer starts generating blocks
                 sync_blocks(rpcs)
@@ -336,7 +337,7 @@ def start_nodes(num_nodes, dirname, extra_args=None, rpchost=None, binary=None):
     return rpcs
 
 def log_filename(dirname, n_node, logname):
-    return os.path.join(dirname, "node"+str(n_node), "regtest", logname)
+    return os.path.join(dirname, "node"+str(n_node), "devnet", logname)
 
 def stop_node(node, i):
     try:
@@ -555,6 +556,40 @@ def assert_array_result(object_array, to_match, expected, should_not_find = Fals
     if num_matched > 0 and should_not_find == True:
         raise AssertionError("Objects were found %s"%(str(to_match)))
 
+def assert_raises_rpc_error(code, message, fun, *args, **kwds):
+    """Run an RPC and verify that a specific JSONRPC exception code and message is raised.
+    Calls function `fun` with arguments `args` and `kwds`. Catches a JSONRPCException
+    and verifies that the error code and message are as expected. Throws AssertionError if
+    no JSONRPCException was raised or if the error code/message are not as expected.
+    Args:
+        code (int), optional: the error code returned by the RPC call (defined
+            in src/rpc/protocol.h). Set to None if checking the error code is not required.
+        message (string), optional: [a substring of] the error string returned by the
+            RPC call. Set to None if checking the error string is not required.
+        fun (function): the function to call. This should be the name of an RPC.
+        args*: positional arguments for the function.
+        kwds**: named arguments for the function.
+    """
+    assert try_rpc(code, message, fun, *args, **kwds), "No exception raised"
+
+def try_rpc(code, message, fun, *args, **kwds):
+    """Tries to run an rpc command.
+    Test against error code and message if the rpc fails.
+    Returns whether a JSONRPCException was raised."""
+    try:
+        fun(*args, **kwds)
+    except JSONRPCException as e:
+        # JSONRPCException was thrown as expected. Check the code and message values are correct.
+        if (code is not None) and (code != e.error["code"]):
+            raise AssertionError("Unexpected JSONRPC error code %i" % e.error["code"])
+        if (message is not None) and (message not in e.error['message']):
+            raise AssertionError("Expected substring not found:" + e.error['message'])
+        return True
+    except Exception as e:
+        raise AssertionError("Unexpected exception raised: " + type(e).__name__)
+    else:
+        return False
+
 def satoshi_round(amount):
     return Decimal(amount).quantize(Decimal('0.00000001'), rounding=ROUND_DOWN)
 
@@ -639,3 +674,14 @@ def create_lots_of_big_transactions(node, txouts, utxos, fee):
 def get_bip9_status(node, key):
     info = node.getblockchaininfo()
     return info['bip9_softforks'][key]
+
+
+def slow_gen(node, count):
+    total = count
+    blocks = []
+    while total > 0:
+        now = min(total, 10)
+        blocks.extend(node.generate(now))
+        total -= now
+        time.sleep(0.1)
+    return blocks

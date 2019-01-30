@@ -43,6 +43,8 @@ public:
     WalletView *currentWalletView();
 
     QWidget *topMenu;
+    QHBoxLayout *menuLayout;
+
 
 private:
     QStackedWidget *walletStack;
@@ -101,7 +103,7 @@ public Q_SLOTS:
     void showLockStaking(bool status);
 
     void setStakingStatus(QString text);
-    void setStakingStats(QString day, QString week, QString month);
+    void setStakingStats(QString day, QString week, QString month, QString year, QString all);
 
     void setVotingStatus(QString text);
 

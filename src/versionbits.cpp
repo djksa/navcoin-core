@@ -136,6 +136,45 @@ public:
 
 }
 
+bool IsVersionBitRejected(const Consensus::Params& params, Consensus::DeploymentPos pos)
+{
+
+    bool isRejected = false;
+
+    std::vector<std::string>& versionBitVotesRejected = mapMultiArgs["-rejectversionbit"];
+    std::vector<std::string>& versionBitVotesAccepted = mapMultiArgs["-acceptversionbit"];
+
+    int bitTest = params.vDeployments[pos].bit;
+
+    BOOST_FOREACH(std::string acceptedBit, versionBitVotesAccepted)
+    {
+        if (isdigit(acceptedBit[0]))
+        {
+          int rBit =  stoi(acceptedBit);
+          if(rBit == bitTest)
+              return false;
+        }
+    }
+
+    for (unsigned int i = 0; i < rejectedVersionBitsByDefault.size(); i++)
+    {
+        if (rejectedVersionBitsByDefault[i] == bitTest)
+            return true;
+    }
+
+    BOOST_FOREACH(std::string rejectedBit, versionBitVotesRejected)
+    {
+        if (isdigit(rejectedBit[0]))
+        {
+            int rBit =  stoi(rejectedBit);
+            if(rBit == bitTest)
+                return true;
+        }
+    }
+
+    return isRejected;
+}
+
 ThresholdState VersionBitsState(const CBlockIndex* pindexPrev, const Consensus::Params& params, Consensus::DeploymentPos pos, VersionBitsCache& cache)
 {
     return VersionBitsConditionChecker(pos).GetStateFor(pindexPrev, params, cache.caches[pos]);
